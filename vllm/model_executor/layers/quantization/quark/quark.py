@@ -13,7 +13,7 @@ from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.quark.quark_moe import (  # noqa: E501
     QuarkMoEMethod)
 from vllm.model_executor.layers.quantization.quark.schemes import (
-    QuarkScheme, QuarkW8A8Fp8, QuarkW8A8Int8)
+    QuarkScheme, QuarkW8A8Fp8, QuarkW4A8Fp8, QuarkW8A8Int8)
 from vllm.model_executor.layers.quantization.quark.utils import (
     deep_compare, should_ignore_layer)
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
@@ -148,6 +148,16 @@ class QuarkConfig(QuantizationConfig):
         else:
             return False
 
+    def _is_fp8_w4a8(self, weight_quant: Optional[Dict[str, Any]],
+                     input_quant: Optional[Dict[str, Any]]) -> bool:
+        # Confirm weights and input quantized.
+        if weight_quant is None or input_quant is None:
+            return False
+
+        # Minimal checks for now        
+        return (weight_quant.get("dtype") == "mx"
+                        and input_quant.get("dtype") == "fp8_e4m3")
+
     def _is_fp8_w8a8(self, weight_quant: Optional[Dict[str, Any]],
                      input_quant: Optional[Dict[str, Any]]) -> bool:
         # Confirm weights and input quantized.
@@ -254,6 +264,15 @@ class QuarkConfig(QuantizationConfig):
                                 not cast(bool, input_config.get("is_dynamic")))
                 return QuarkW8A8Fp8(qscheme=weight_qscheme,
                                     is_static_input_scheme=input_static)
+        elif self._is_fp8_w4a8(weight_config, input_config):
+            weight_qscheme = cast(str, weight_config.get("qscheme")) # 'per_group'
+            input_static = (input_config is not None and
+                            not cast(bool, input_config.get("is_dynamic")))
+            return QuarkW4A8Fp8(qscheme=weight_qscheme,
+                                is_static_input_scheme=input_static,
+                                axis = weight_config.get("ch_axis"),
+                                group_size = weight_config.get("group_size")
+                                )
         elif self._is_static_tensor_w8a8(weight_config, input_config):
             weight_qscheme = cast(str, weight_config.get("qscheme"))
             return QuarkW8A8Int8(qscheme=weight_qscheme,

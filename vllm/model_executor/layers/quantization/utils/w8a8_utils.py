@@ -89,6 +89,77 @@ def requantize_with_max_scale(
 
     return max_w_scale, weight
 
+@torch.compile
+def dequant_f4_to_f32(weight, weight_scale, group_scheme):
+    shape = weight.shape
+    weight = weight.reshape([-1])
+    w1 = weight & 0x0F
+    w2 = weight >> 4
+    weight = torch.stack([w2,w1], axis=1)
+    weight = weight.reshape([-1, group_scheme[1]])
+    exponents = (weight >> 1) & 3
+    mantissas = weight & 1
+    zeros = ((weight & 7) == 0)
+    subnorm =((weight & 7) == 1)
+    value = (1 << (exponents-1)) * 0.5 * (2 + mantissas) 
+    value = torch.where(zeros, 0, value)
+    value = torch.where(subnorm, 0.5, value)
+    value *= 1-2*(weight >> 3).float()
+    value *= torch.pow(2.0, weight_scale.float().reshape([-1,1]))
+    value = value.reshape([shape[0], shape[1]*2])
+    return value
+
+def dequant_f4_to_f8(weight, weight_scale, group_scheme):
+    value = dequant_f4_to_f32(weight, weight_scale, group_scheme)
+    return ops.scaled_fp8_quant(
+        value,
+        None,
+        scale_ub=None,
+        use_per_token_if_dynamic=False)
+
+# This computes a (fp4,fp8) GEMM.
+# In future, when we have native support in torch and hipblaslt,
+# we will call the torch scaled_mm op directly.
+# At present, we manually convert this into a (fp8,fp8) GEMM.
+def apply_fp4_fp8_linear(
+    input: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    out_dtype: Optional[torch.dtype] = None,
+    input_scale: Optional[torch.Tensor] = None,
+    input_scale_ub: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    cutlass_fp8_supported: bool = True,
+    use_per_token_if_dynamic: bool = False,
+    group_scheme: tuple = (-1,32)
+) -> torch.Tensor:
+    input_2d = input.view(-1, input.shape[-1])
+
+    # changed weight.shape[1] -> weight.shape[0] because weights are no longer transposed
+    output_shape = [*input.shape[:-1], weight.shape[0]]
+
+    if out_dtype is None:
+        out_dtype = input.dtype
+
+    # quantize input to float8 if necessary
+    qinput, x_scale = ops.scaled_fp8_quant(
+        input_2d,
+        input_scale,
+        scale_ub=input_scale_ub,
+        use_per_token_if_dynamic=use_per_token_if_dynamic)
+
+    # dequantize weight from float4 to float8
+    f8_weight, f8_weight_scale = dequant_f4_to_f8(weight, weight_scale, group_scheme)
+    f8_weight.requires_grad = False
+    f8_weight_scale.requires_grad = False
+    output = ops.cutlass_scaled_mm(qinput,
+                                   f8_weight.t(),
+                                   out_dtype=input.dtype,
+                                   scale_a=x_scale,
+                                   scale_b=f8_weight_scale,
+                                   bias=bias)
+    return output.view(*output_shape)
+
 
 def apply_fp8_linear(
     input: torch.Tensor,
