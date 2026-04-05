@@ -11,7 +11,7 @@
         "BLOCK_SIZE_M": 256,
         "BLOCK_SIZE_N": 128,
         "BLOCK_SIZE_K": 128,
-        "GROUP_SIZE_M": 16,
+        "GROUP_SIZE_M": 32,
         "num_warps": 4,
         "num_stages": 2
     },
@@ -27,7 +27,7 @@
         "BLOCK_SIZE_M": 256,
         "BLOCK_SIZE_N": 128,
         "BLOCK_SIZE_K": 128,
-        "GROUP_SIZE_M": 16,
+        "GROUP_SIZE_M": 64,
         "num_warps": 4,
         "num_stages": 2
     },
@@ -35,7 +35,7 @@
         "BLOCK_SIZE_M": 256,
         "BLOCK_SIZE_N": 128,
         "BLOCK_SIZE_K": 128,
-        "GROUP_SIZE_M": 16,
+        "GROUP_SIZE_M": 32,
         "num_warps": 4,
         "num_stages": 2
     }
