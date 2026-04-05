@@ -212,7 +212,7 @@ class QuarkOCP_MX(QuarkScheme):
             )
 
         # TODO: integrate (or test) mixed-precision kernel.
-        self.emulate = not current_platform.supports_mx() or (
+        self.emulate = (
             self.input_dtype != "mxfp4" or self.weight_dtype != "mxfp4"
         )
 
