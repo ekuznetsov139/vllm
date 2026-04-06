@@ -338,6 +338,7 @@ def rocm_fp8_paged_mqa_logits(
         dim = q_fp8.shape[3]
         N = kv_cache_fp8.shape[0]
         block_size = kv_cache_fp8.shape[1]
+        #print("\n\n\nUsing AITER MQA with block_size %d\n\n\n" % block_size)
         #B = kv_cache.shape[2]
         # kv_cache is [N, 16, 1, 132]
         # = [N, 132*16] 
@@ -375,6 +376,7 @@ def rocm_fp8_paged_mqa_logits(
         )
         return out_qk.sum(dim=0)
     else:
+        print("\n\n\nUsing TORCH MQA with block_size %d\n\n\n" % kv_cache_fp8.shape[1])
         return fp8_paged_mqa_logits_torch(
             q_fp8, kv_cache_fp8, weights, context_lens, block_tables, max_model_len
         )

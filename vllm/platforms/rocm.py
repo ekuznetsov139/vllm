@@ -271,7 +271,7 @@ class RocmPlatform(Platform):
 
         block_size = attn_selector_config.block_size
         kv_cache_dtype = attn_selector_config.kv_cache_dtype
-
+        print("attn_backend_cls block size", block_size)
         if attn_selector_config.use_sparse:
             if kv_cache_dtype and kv_cache_dtype.startswith("fp8"):
                 raise ValueError(
