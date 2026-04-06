@@ -230,7 +230,12 @@ def fp8_paged_mqa_logits_torch(
 
     fp8_dtype = current_platform.fp8_dtype()
     batch_size, next_n, _, dim = q.size()
-    kv_cache, scale = kv_cache[..., :dim], kv_cache[..., dim:]
+    block_size = kv_cache.shape[1]
+    N = kv_cache.shape[0]
+    kv_cache = kv_cache.reshape([N, (dim+4)*block_size])
+    kv_cache, scale = kv_cache[:, :dim*block_size], kv_cache[:, dim*block_size:]
+    kv_cache = kv_cache.reshape([N, block_size, 1, dim])
+    scale = scale.reshape([N, block_size, 1, 4])
     scale = scale.contiguous().view(torch.float)
     q = q.float()
     kv_cache = kv_cache.view(fp8_dtype).float() * scale
@@ -262,7 +267,7 @@ def fp8_paged_mqa_logits_torch(
                 (qx.transpose(0, 1) @ kx.transpose(0, 1).transpose(1, 2)).to(
                     logits.dtype
                 ),
-                float("-inf"),
+                0.0,
             )
             s = torch.relu(s) * weight_slice[..., None]
             s = s.sum(dim=0)
@@ -329,9 +334,22 @@ def rocm_fp8_paged_mqa_logits(
         aiter_paged_mqa_logits_module = paged_mqa_logits_module()
     # FIXME(ganyi): Temporarily disable the aiter path until nightly docker
     # update aiter to the fix PR.
-    aiter_paged_mqa_logits_module = None
-
     if aiter_paged_mqa_logits_module is not None:
+        dim = q_fp8.shape[3]
+        N = kv_cache_fp8.shape[0]
+        block_size = kv_cache_fp8.shape[1]
+        #B = kv_cache.shape[2]
+        # kv_cache is [N, 16, 1, 132]
+        # = [N, 132*16] 
+        if block_size > 1:
+           kv_cache_fp8_1 = kv_cache_fp8.reshape([N, (dim+4)*block_size])
+           kv_cache_fp8_1, scale = kv_cache_fp8_1[:, :dim*block_size], kv_cache_fp8_1[:, dim*block_size:]
+           kv_cache_fp8_1 = kv_cache_fp8_1.reshape([N, block_size, 1, dim])
+           scale = scale.reshape([N, block_size, 1, 4])
+           kv_cache_fp8_1 = torch.concatenate([kv_cache_fp8_1, scale], axis=3)
+        else:
+           kv_cache_fp8_1 = kv_cache_fp8
+
         deepgemm_fp8_paged_mqa_logits_stage1 = (
             aiter_paged_mqa_logits_module.deepgemm_fp8_paged_mqa_logits_stage1
         )
@@ -342,14 +360,18 @@ def rocm_fp8_paged_mqa_logits(
             device="cuda",
             dtype=torch.float32,
         )
+        ChunkQ = 64
+        while (heads % ChunkQ):
+           ChunkQ = ChunkQ // 2
         deepgemm_fp8_paged_mqa_logits_stage1(
             q_fp8,
-            kv_cache_fp8,
+            kv_cache_fp8_1,
             weights,
             out_qk,
             context_lens,
             block_tables,
             max_model_len,
+            ChunkQ
         )
         return out_qk.sum(dim=0)
     else:
@@ -385,7 +407,7 @@ def fp8_mqa_logits_torch(
     """
     kv, scale = kv
     seq_len_kv = kv.shape[0]
-    k = kv.to(torch.bfloat16)
+    k = (kv.to(torch.float32) * scale).to(torch.bfloat16)
     q = q.to(torch.bfloat16)
 
     mask_lo = (
@@ -396,7 +418,7 @@ def fp8_mqa_logits_torch(
     )
     mask = mask_lo & mask_hi
 
-    score = torch.einsum("mhd,nd->hmn", q, k).float() * scale
+    score = torch.einsum("mhd,nd->hmn", q, k).float()
     logits = (score.relu() * weights.unsqueeze(-1).transpose(0, 1)).sum(dim=0)
     logits = logits.masked_fill(~mask, float("-inf"))
 
