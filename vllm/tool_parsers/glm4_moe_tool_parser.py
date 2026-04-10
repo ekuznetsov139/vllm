@@ -128,12 +128,12 @@ class Glm4MoeModelToolParser(ToolParser):
         if tools is None:
             return False
         for tool in tools:
-            if tool.function.name != tool_name:
+            if tool.function["name"] != tool_name:
                 continue
-            if tool.function.parameters is None:
+            if tool.function["parameters"] is None:
                 return False
             arg_type = (
-                tool.function.parameters.get("properties", {})
+                tool.function["parameters"].get("properties", {})
                 .get(arg_name, {})
                 .get("type", None)
             )
