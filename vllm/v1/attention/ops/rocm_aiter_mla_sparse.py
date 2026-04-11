@@ -305,8 +305,8 @@ def paged_mqa_logits_module():
 @triton.jit
 def _fp8_paged_mqa_logits_kernel(
     q_ptr,            # [B, next_n, H, D] fp8
-    kv_fp8_ptr,       # [num_blocks, BLOCK_SIZE*D] fp8
-    kv_scale_ptr,     # [num_blocks, BLOCK_SIZE] float32
+    kv_fp8_ptr,       # [num_blocks, (D_actual+4)*BLOCK_SIZE] fp8 — full packed row, fp8 data first
+    kv_scale_ptr,     # [num_blocks, BLOCK_SIZE] float32 — non-contiguous view into same buffer
     weights_ptr,      # [B * next_n, H] float32
     context_lens_ptr, # [B] int32
     block_tables_ptr, # [B, max_blocks_per_seq] int32
@@ -316,6 +316,8 @@ def _fp8_paged_mqa_logits_kernel(
     max_blocks_per_seq,
     q_stride_b, q_stride_n, q_stride_h, q_stride_d,
     logits_stride_m,
+    kv_fp8_row_stride,    # fp8 elements per physical block row: (D_actual + 4) * BLOCK_SIZE
+    kv_scale_row_stride,  # float32 elements per physical block row: (D_actual + 4) * BLOCK_SIZE // 4
     BLOCK_SIZE: tl.constexpr,    # KV cache block size (positions per physical block)
     D: tl.constexpr,             # head dim, padded to next power of 2 by caller
     D_actual: tl.constexpr,      # true head dim before padding; used for strides and masking
@@ -352,18 +354,21 @@ def _fp8_paged_mqa_logits_kernel(
     )  # [BLOCK_N] physical block indices
 
     kv_mask = logi_offs < context_len
-    # KV cache was written with stride D_actual (not the padded D).
+    # kv_fp8_ptr has row stride kv_fp8_row_stride = (D_actual+4)*BLOCK_SIZE; fp8 data is
+    # at the start of each row, packed as [BLOCK_SIZE, D_actual] (position-major).
     k_blk = tl.load(
-        kv_fp8_ptr + phys_blk[:, None] * (D_actual * BLOCK_SIZE)
+        kv_fp8_ptr + phys_blk[:, None] * kv_fp8_row_stride
                    + within_blk[:, None] * D_actual
                    + d_offs[None, :],
         mask=kv_mask[:, None] & d_mask[None, :], other=0.0,
     )  # [BLOCK_N, D] fp8
 
+    # kv_scale_ptr is a float32 view of the same buffer offset to the scale region.
+    # Its row stride is kv_scale_row_stride = (D_actual+4)*BLOCK_SIZE//4.
     scale = tl.load(
-        kv_scale_ptr + phys_blk * BLOCK_SIZE + within_blk,
+        kv_scale_ptr + phys_blk * kv_scale_row_stride + within_blk,
         mask=kv_mask, other=1.0,
-    )  # [BLOCK_N]
+    )  # [BLOCK_N] float32
 
     # Load all H query heads at once → [H, D] fp8; stays in registers.
     q_blk = tl.load(
@@ -406,13 +411,21 @@ def fp8_paged_mqa_logits_triton(
     N = kv_cache.shape[0]
     block_size = kv_cache.shape[1]
 
-    # Unpack kv_cache [N, block_size, 1, D+4] uint8.
+    # Unpack kv_cache [N, block_size, 1, D+4] uint8 without copying.
     # Memory layout (written by indexer_k_quant_and_cache): within each physical
     # block the D*block_size fp8 bytes come first (all positions, all dims packed),
     # followed by 4*block_size bytes for per-position float32 scales.
-    kv_2d = kv_cache.reshape(N, (D + 4) * block_size)
-    kv_fp8 = kv_2d[:, :D * block_size].contiguous().view(fp8_dtype)         # [N, D*block_size]
-    kv_scale = kv_2d[:, D * block_size:].contiguous().view(torch.float32)    # [N, block_size]
+    kv_2d = kv_cache.reshape(N, (D + 4) * block_size)  # contiguous; reshape never copies here
+
+    # Zero-copy fp8 view of the full packed row (stride[0] = (D+4)*block_size fp8 elements).
+    # The kernel uses kv_fp8_row_stride to skip over the trailing scale bytes in each row.
+    kv_fp8 = kv_2d.view(fp8_dtype)   # [N, (D+4)*block_size] fp8, same storage
+
+    # Zero-copy float32 view starting at the scale region of each row.
+    # kv_2d viewed as float32: shape [N, (D+4)*block_size//4], stride[0]=(D+4)*block_size//4.
+    # Slicing columns [D*block_size//4:] gives a non-contiguous view that Triton handles
+    # via the explicit kv_scale_row_stride parameter below.
+    kv_scale = kv_2d.view(torch.float32)[:, D * block_size // 4:]  # [N, block_size] f32
 
     M = batch_size * next_n
     logits = torch.full((M, max_model_len), float("-inf"), device=q.device, dtype=torch.float32)
@@ -431,6 +444,8 @@ def fp8_paged_mqa_logits_triton(
         max_blocks_per_seq,
         q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         logits.stride(0),
+        kv_fp8.stride(0),    # (D+4)*block_size — fp8 elements per block row
+        kv_scale.stride(0),  # (D+4)*block_size//4 — float32 elements per block row
         BLOCK_SIZE=block_size,
         D=BLOCK_D,
         D_actual=D,
@@ -473,7 +488,7 @@ def rocm_fp8_paged_mqa_logits(
     force_triton = (os.environ.get('PAGED_MQA_TRITON','1')=='1')
 
     block_size = kv_cache_fp8.shape[1]
-    logger.info(f"rocm_fp8_paged_mqa_logits: KV cache "
+    logger.info_once(f"rocm_fp8_paged_mqa_logits: KV cache "
                      f"block size {block_size}, force_triton {force_triton}")
     # As of 2026/04/01 (commit 381129b0), deepgemm_fp8_paged_mqa_logits_stage1
     # (the aiter triton path) triggers an obscure gluon compiler error when
