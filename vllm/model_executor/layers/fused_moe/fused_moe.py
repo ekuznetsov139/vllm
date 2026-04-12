@@ -1756,11 +1756,36 @@ def fused_experts_impl(
         # and for which we have a native OCP mx fused MOE kernel,
         # this dequantization step should not be done.
         if ocp_mx_scheme.startswith("w_mxfp4"):
-            # Weight has to be dequantized for mxfp4 emulation.
-            w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
-            w1_scale = None
-            w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
-            w2_scale = None
+            if hidden_states.shape[0] == 1:
+                # Single-token decode: topk_ids is [1, top_k] with no repeats,
+                # so the flat sorted values ARE the unique expert IDs.
+                # sort() has fixed output size → graph-compatible.
+                unique_expert_ids = topk_ids.view(-1).sort().values
+                num_active = unique_expert_ids.shape[0]  # always == top_k
+                w1 = dequant_mxfp4(
+                    w1[unique_expert_ids], w1_scale[unique_expert_ids],
+                    hidden_states.dtype
+                )
+                w1_scale = None
+                w2 = dequant_mxfp4(
+                    w2[unique_expert_ids], w2_scale[unique_expert_ids],
+                    hidden_states.dtype
+                )
+                w2_scale = None
+                # Remap global expert IDs → contiguous local [0, top_k).
+                # scatter_ + gather have fixed shapes → graph-compatible.
+                id_map = topk_ids.new_full((global_num_experts,), -1)
+                id_map[unique_expert_ids] = torch.arange(
+                    num_active, dtype=topk_ids.dtype, device=topk_ids.device
+                )
+                topk_ids = id_map[topk_ids.view(-1)].view(topk_ids.shape)
+                global_num_experts = num_active
+            else:
+                # Prefill or multi-token decode: dequant all experts.
+                w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+                w1_scale = None
+                w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+                w2_scale = None
         elif ocp_mx_scheme.startswith("w_mxfp6_e3m2"):
             w1 = dequant_mxfp6(
                 w1, w1_scale, quant_dtype="fp6_e3m2", float_dtype=hidden_states.dtype
