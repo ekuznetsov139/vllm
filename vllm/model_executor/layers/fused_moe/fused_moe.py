@@ -1756,11 +1756,34 @@ def fused_experts_impl(
         # and for which we have a native OCP mx fused MOE kernel,
         # this dequantization step should not be done.
         if ocp_mx_scheme.startswith("w_mxfp4"):
-            # Weight has to be dequantized for mxfp4 emulation.
-            w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+            # Only dequantize the experts actually activated in this batch.
+            # topk_ids is already known here; slicing before dequant avoids
+            # moving the full weight tensors (all experts) through the dequant
+            # kernel when only a handful of experts are used (e.g. decode).
+            valid_mask = topk_ids >= 0
+            unique_expert_ids, _ = topk_ids[valid_mask].unique(
+                sorted=True, return_inverse=False
+            )
+            num_active = unique_expert_ids.shape[0]
+            w1 = dequant_mxfp4(
+                w1[unique_expert_ids], w1_scale[unique_expert_ids],
+                hidden_states.dtype
+            )
             w1_scale = None
-            w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+            w2 = dequant_mxfp4(
+                w2[unique_expert_ids], w2_scale[unique_expert_ids],
+                hidden_states.dtype
+            )
             w2_scale = None
+            # Remap topk_ids from global expert IDs to contiguous local
+            # indices [0, num_active).  Invalid entries (-1) stay -1.
+            id_map = topk_ids.new_full((global_num_experts,), -1)
+            id_map[unique_expert_ids] = torch.arange(
+                num_active, dtype=topk_ids.dtype, device=topk_ids.device
+            )
+            remapped = id_map[topk_ids.clamp(min=0)]
+            topk_ids = torch.where(valid_mask, remapped, topk_ids)
+            global_num_experts = num_active
         elif ocp_mx_scheme.startswith("w_mxfp6_e3m2"):
             w1 = dequant_mxfp6(
                 w1, w1_scale, quant_dtype="fp6_e3m2", float_dtype=hidden_states.dtype
