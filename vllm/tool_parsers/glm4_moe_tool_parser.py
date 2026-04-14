@@ -128,15 +128,26 @@ class Glm4MoeModelToolParser(ToolParser):
         if tools is None:
             return False
         for tool in tools:
-            if tool.function["name"] != tool_name:
-                continue
-            if tool.function["parameters"] is None:
-                return False
-            arg_type = (
-                tool.function["parameters"].get("properties", {})
-                .get(arg_name, {})
-                .get("type", None)
-            )
+            if isinstance(tool.function, dict):
+                if tool.function["name"] != tool_name:
+                    continue
+                if tool.function["parameters"] is None:
+                    return False
+                arg_type = (
+                    tool.function["parameters"].get("properties", {})
+                    .get(arg_name, {})
+                    .get("type", None)
+                )
+            else:
+                if tool.function.name != tool_name:
+                    continue
+                if tool.function.parameters is None:
+                    return False
+                arg_type = (
+                    tool.function.parameters.get("properties", {})
+                    .get(arg_name, {})
+                    .get("type", None)
+                )
             return arg_type == "string"
         logger.debug("No tool named '%s'.", tool_name)
         return False
@@ -171,7 +182,7 @@ class Glm4MoeModelToolParser(ToolParser):
         request: ChatCompletionRequest,
     ) -> ExtractedToolCallInformation:
         matched_tool_calls = self.func_call_regex.findall(model_output)
-        logger.debug("model_output: %s", model_output)
+        logger.info("model_output: %s", model_output)
         try:
             tool_calls: list[ToolCall] = []
             for match in matched_tool_calls:
