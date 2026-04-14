@@ -428,7 +428,9 @@ def harmony_to_response_output(message: Message) -> list[ResponseOutputItem]:
             output_items.append(_parse_browser_tool_call(message, recipient))
 
         # Function calls (should only happen on commentary channel)
-        elif message.channel == "commentary" and recipient.startswith("functions."):
+        #elif message.channel == "commentary" and recipient.startswith("functions."):
+        elif recipient.startswith("functions."):
+            print(f"function in channel {message.channel} with recipient {recipient}")
             output_items.extend(_parse_function_call(message, recipient))
 
         # Built-in MCP tools (python, browser, container)
