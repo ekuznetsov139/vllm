@@ -259,10 +259,10 @@ class MinimaxM2ToolParser(ToolParser):
             for tool in tools:
                 if (
                     hasattr(tool, "function")
-                    and tool.function.name == function_name
-                    and hasattr(tool.function, "parameters")
+                    and tool.function["name"] == function_name
+                    and tool.function.get("parameters", None) is not None
                 ):
-                    params = tool.function.parameters
+                    params = tool.function["parameters"]
                     if isinstance(params, dict) and "properties" in params:
                         param_config = params["properties"]
                     break
