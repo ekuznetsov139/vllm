@@ -16,10 +16,10 @@ __all__ = [
 ]
 
 _PARSERS_TO_REGISTER = {
-    "minimax_m2": (  # name
-        "minimax_m2_parser",  # filename
-        "MiniMaxM2Parser",  # class_name
-    ),
+#    "minimax_m2": (  # name
+#        "minimax_m2_parser",  # filename
+#        "MiniMaxM2Parser",  # class_name
+#    ),
 }
 
 
