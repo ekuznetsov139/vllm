@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import asyncio
+import itertools
+import threading
 from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -124,6 +126,50 @@ class StreamingUpdate:
     prompt_token_ids: list[int] | None
     arrival_time: float
     final: bool = False
+
+
+_dump_counter = itertools.count(1)
+_dump_lock = threading.Lock()
+_DUMP_INTERVAL = 2000  # tokens
+
+
+def _next_dump_idx() -> int:
+    with _dump_lock:
+        return next(_dump_counter)
+
+
+def _dump_query(req_id: str, prompt: str | None, prompt_token_ids, tokenizer) -> None:
+    """Write /tmp/query_NNNNN.txt when a new request arrives."""
+    if prompt is None and not prompt_token_ids:
+        return
+    idx = _next_dump_idx()
+    n = len(prompt_token_ids) if prompt_token_ids else 0
+    with open(f"/tmp/query_{idx:05d}.txt", "w") as f:
+        f.write(f"=== {req_id} ({n} prompt tokens) ===\n")
+        if prompt is not None:
+            f.write(prompt)
+        else:
+            #print(tokenizer)
+            #print(type(tokenizer))
+            #print(tokenizer.decode(prompt_token_ids))
+            f.write(tokenizer.decode(prompt_token_ids))#f"<token IDs: {prompt_token_ids}>")
+        f.write("\n")
+#    except Exception:
+#        pass
+
+
+def _dump_response(req_id: str, output_text: str,
+                   num_tokens: int, finished: bool) -> None:
+    """Write /tmp/response_NNNNN.txt at completion or every _DUMP_INTERVAL tokens."""
+    idx = _next_dump_idx()
+    try:
+        status = "FINISHED" if finished else f"{num_tokens} tokens so far"
+        with open(f"/tmp/response_{idx:05d}.txt", "w") as f:
+            f.write(f"=== {req_id} ({status}) ===\n")
+            f.write(output_text)
+            f.write("\n")
+    except Exception:
+        pass
 
 
 class RequestState:
@@ -530,6 +576,7 @@ class OutputProcessor:
             stream_interval=self.stream_interval,
         )
         self.request_states[request_id] = req_state
+        _dump_query(request_id, prompt, request.prompt_token_ids, self.tokenizer)
         if parent_req:
             self.parent_requests[parent_req.request_id] = parent_req
 
@@ -634,6 +681,19 @@ class OutputProcessor:
                 # 3) Compute sample and prompt logprobs for request,
                 # if required.
                 req_state.logprobs_processor.update_from_output(engine_core_output)
+
+                # Debug dump: on completion or every _DUMP_INTERVAL tokens.
+                num_out = req_state.detokenizer.num_output_tokens()
+                finished_now = finish_reason is not None
+                if finished_now or num_out % _DUMP_INTERVAL == 0:
+                    _dump_response(
+                        req_id,
+                        req_state.detokenizer.get_next_output_text(
+                            finished_now, delta=False
+                        ),
+                        num_out,
+                        finished_now,
+                    )
 
             # 4) Create and handle RequestOutput objects.
             if request_output := req_state.make_request_output(
