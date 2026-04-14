@@ -1756,34 +1756,36 @@ def fused_experts_impl(
         # and for which we have a native OCP mx fused MOE kernel,
         # this dequantization step should not be done.
         if ocp_mx_scheme.startswith("w_mxfp4"):
-            # Only dequantize the experts actually activated in this batch.
-            # topk_ids is already known here; slicing before dequant avoids
-            # moving the full weight tensors (all experts) through the dequant
-            # kernel when only a handful of experts are used (e.g. decode).
-            valid_mask = topk_ids >= 0
-            unique_expert_ids, _ = topk_ids[valid_mask].unique(
-                sorted=True, return_inverse=False
-            )
-            num_active = unique_expert_ids.shape[0]
-            w1 = dequant_mxfp4(
-                w1[unique_expert_ids], w1_scale[unique_expert_ids],
-                hidden_states.dtype
-            )
-            w1_scale = None
-            w2 = dequant_mxfp4(
-                w2[unique_expert_ids], w2_scale[unique_expert_ids],
-                hidden_states.dtype
-            )
-            w2_scale = None
-            # Remap topk_ids from global expert IDs to contiguous local
-            # indices [0, num_active).  Invalid entries (-1) stay -1.
-            id_map = topk_ids.new_full((global_num_experts,), -1)
-            id_map[unique_expert_ids] = torch.arange(
-                num_active, dtype=topk_ids.dtype, device=topk_ids.device
-            )
-            remapped = id_map[topk_ids.clamp(min=0)]
-            topk_ids = torch.where(valid_mask, remapped, topk_ids)
-            global_num_experts = num_active
+            if hidden_states.shape[0] == 1:
+                # Single-token decode: topk_ids is [1, top_k] with no repeats,
+                # so the flat sorted values ARE the unique expert IDs.
+                # sort() has fixed output size → graph-compatible.
+                unique_expert_ids = topk_ids.view(-1).sort().values
+                num_active = unique_expert_ids.shape[0]  # always == top_k
+                w1 = dequant_mxfp4(
+                    w1[unique_expert_ids], w1_scale[unique_expert_ids],
+                    hidden_states.dtype
+                )
+                w1_scale = None
+                w2 = dequant_mxfp4(
+                    w2[unique_expert_ids], w2_scale[unique_expert_ids],
+                    hidden_states.dtype
+                )
+                w2_scale = None
+                # Remap global expert IDs → contiguous local [0, top_k).
+                # scatter_ + gather have fixed shapes → graph-compatible.
+                id_map = topk_ids.new_full((global_num_experts,), -1)
+                id_map[unique_expert_ids] = torch.arange(
+                    num_active, dtype=topk_ids.dtype, device=topk_ids.device
+                )
+                topk_ids = id_map[topk_ids.view(-1)].view(topk_ids.shape)
+                global_num_experts = num_active
+            else:
+                # Prefill or multi-token decode: dequant all experts.
+                w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+                w1_scale = None
+                w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+                w2_scale = None
         elif ocp_mx_scheme.startswith("w_mxfp6_e3m2"):
             w1 = dequant_mxfp6(
                 w1, w1_scale, quant_dtype="fp6_e3m2", float_dtype=hidden_states.dtype
