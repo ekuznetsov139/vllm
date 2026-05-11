@@ -680,17 +680,29 @@ class Indexer(nn.Module):
         q = q.view(-1, self.n_head, self.head_dim)
 
         if current_platform.is_rocm():
-            # This path should works on all platform, will remove extra
-            # branches in the future
-            # Fused wk + weights_proj: one GEMM, then split
+            # ROCm path: rotate the rope_dim slice of q/k without splitting and
+            # re-concatenating the full head_dim.  Capture rotary_emb's return
+            # value and copy it back through the slice so the result lands in
+            # q/k regardless of whether rotary_emb is truly in-place: this is
+            # the fix for the bug introduced by PR #41217, which discarded the
+            # return and only worked when rotary_emb happened to write through
+            # the slice view.
             kw, _ = self.wk_weights_proj(hidden_states)
             k = kw[:, : self.head_dim]
             weights = kw[:, self.head_dim :]
-
             k = self.k_norm(k)
-
-            rotary_emb(
-                positions, q[..., : self.rope_dim], k[..., : self.rope_dim].unsqueeze(1)
+            q_rope, k_rope = rotary_emb(
+                positions,
+                q[..., : self.rope_dim],
+                k[..., : self.rope_dim].unsqueeze(1),
+            )
+            # RoPE (NeoX) may add a leading dim during compilation; reshape
+            # back to the token-flattened layouts the slices expect.
+            q[..., : self.rope_dim].copy_(
+                q_rope.reshape(-1, self.n_head, self.rope_dim)
+            )
+            k[..., : self.rope_dim].copy_(
+                k_rope.reshape(-1, 1, self.rope_dim).squeeze(-2)
             )
         else:
             q_pe, q_nope = torch.split(
