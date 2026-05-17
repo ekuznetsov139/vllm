@@ -995,7 +995,14 @@ def _topk_indices_prefill(
             topk_tokens,
         )
     else:
-        topk_out.copy_(_topk_indices_torch(logits, topk_tokens))
+        # torch.topk returns absolute indices into the packed-prefill K
+        # dimension. The downstream converter kernel expects per-sequence-local
+        # positions (it does `tok // BLOCK_SIZE` to index into block_table[req]).
+        # Subtract cu_seqlen_ks[q] per query so the result matches what the
+        # fast path (top_k_per_row_prefill) writes.
+        topk_abs = _topk_indices_torch(logits, topk_tokens)
+        ks_offset = cu_seqlen_ks.to(topk_abs.device, torch.int32).unsqueeze(-1)
+        topk_out.copy_(torch.where(topk_abs >= 0, topk_abs - ks_offset, topk_abs))
 
 
 def _topk_indices_decode(
