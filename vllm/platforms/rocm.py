@@ -205,6 +205,15 @@ def _get_gcn_arch() -> str:
         return _query_gcn_arch_from_amdsmi()
     except Exception as e:
         logger.debug("Failed to get GCN arch via amdsmi: %s", e)
+        # NOTE: use logger.debug, not warning_once, here. This runs at module
+        # load while resolving the platform; warning_once imports
+        # vllm.distributed, which causes a circular import before
+        # current_platform is bound. This path is taken on the FFM simulator,
+        # where amdsmi is unavailable (and would report the host's real gfx950
+        # cards rather than the simulated gfx1250) — torch.cuda below is correct.
+        logger.debug(
+            "Failed to get GCN arch via amdsmi, falling back to torch.cuda."
+        )
     # Ultimate fallback: use torch.cuda (will initialize CUDA)
     return torch.cuda.get_device_properties("cuda").gcnArchName
 
