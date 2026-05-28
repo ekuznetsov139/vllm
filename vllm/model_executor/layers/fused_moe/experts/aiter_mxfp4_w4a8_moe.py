@@ -141,6 +141,15 @@ def triton_kernel_fused_mxfp4_w4a8_experts(
         hidden_states, quant_config.w1_precision.flex_ctx.lhs_data.scale
     )
 
+    # gfx1250 stores the MXFP4 weight scale unswizzled (StridedLayout, see
+    # mxfp4_utils._swizzle_mxfp4) because the gfx1250 moe_gemm_a8w4 reads a
+    # CDNA4-swizzled scale as garbage (validated on the FFM sim: CDNA4_SCALE ->
+    # maxrel ~7e4, plain/None -> ~6e-3); pass swizzle_mx_scale=None there.
+    # gfx950 uses the CDNA4 swizzle layout.
+    from vllm.platforms.rocm import on_gfx1250
+
+    mx_scale_swizzle = None if on_gfx1250() else "CDNA4_SCALE"
+
     intermediate_cache1 = moe_gemm_a8w4(
         hidden_states,
         w1.storage.data,
@@ -209,6 +218,11 @@ class AiterW4A8ExpertsMonolithic(mk.FusedMoEExpertsMonolithic):
 
     @staticmethod
     def _supports_current_device() -> bool:
+        # Requires AITER and a supported AMD arch. gfx950 (CDNA4) uses the
+        # in-kernel gather + CDNA4 scale swizzle; gfx1250 routes through the
+        # same moe_gemm_a8w4 kernel with a manual gather and unswizzled scales
+        # (see aiter_triton_kernel_w4a8_moe_forward / the swizzle handling in
+        # triton_kernel_fused_mxfp4_w4a8_experts).
         if not rocm_aiter_ops.is_enabled():
             return False
         from vllm.platforms.rocm import on_gfx950, on_gfx1250
