@@ -79,7 +79,7 @@ union BufferResource {
   };
 };
 
-#if !defined(__gfx1250__)
+#if !defined(__gfx1250__) && !defined(__gfx1260__)
 __quickreduce_device_inline__ static int32x4_t buffer_load_dwordx4(
     int32x4_t srsrc, int32_t voffset, int32_t soffset,
     int32_t aux) __asm("llvm.amdgcn.raw.buffer.load.v4i32");

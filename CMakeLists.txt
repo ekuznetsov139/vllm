@@ -49,7 +49,7 @@ install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
 set(PYTHON_SUPPORTED_VERSIONS "3.10" "3.11" "3.12" "3.13" "3.14")
 
 # Supported AMD GPU architectures.
-set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1250;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201")
+set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1250;gfx1260;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201")
 
 # ROCm installation prefix. Default to /opt/rocm but allow override via
 # -DROCM_PATH=/your/rocm/path when invoking cmake.
@@ -1481,14 +1481,14 @@ if(VLLM_GPU_LANG STREQUAL "HIP")
     "csrc/rocm/attention.cu")
   set(VLLM_ROCM_EXT_FLAGS ${VLLM_GPU_FLAGS})
 
-  # skinny_gemms*.cu are built on gfx9/gfx11 ISA (MFMA, dot2/dot4, legacy
-  # s_waitcnt asm) that gfx1250 (gfx12) does not provide. Exclude them from the
-  # gfx1250 build and disable their op registrations (VLLM_SKIP_SKINNY_GEMMS);
-  # vLLM falls back to default/Triton GEMM for those ops on gfx1250.
+  # skinny_gemms.cu is built on gfx9/gfx11 ISA (MFMA, dot2/dot4, legacy
+  # s_waitcnt asm) that gfx1250/gfx1260 (gfx12) do not provide. Exclude them from
+  # the build and disable its op registrations (VLLM_SKIP_SKINNY_GEMMS);
+  # vLLM falls back to default/Triton GEMM for those ops on gfx1250/gfx1260.
   list(REMOVE_ITEM VLLM_ROCM_EXT_SRC "csrc/rocm/skinny_gemms.cu")
   list(REMOVE_ITEM VLLM_ROCM_EXT_SRC "csrc/rocm/skinny_gemms_int4.cu")
   set(VLLM_SKINNY_ARCHES ${VLLM_GPU_ARCHES})
-  list(FILTER VLLM_SKINNY_ARCHES EXCLUDE REGEX "gfx1250")
+  list(FILTER VLLM_SKINNY_ARCHES EXCLUDE REGEX "gfx1250|gfx1260")
   if(VLLM_SKINNY_ARCHES)
     message(STATUS "Building skinny_gemms for archs: ${VLLM_SKINNY_ARCHES}")
     set(VLLM_SKINNY_SRC
@@ -1508,7 +1508,7 @@ if(VLLM_GPU_LANG STREQUAL "HIP")
     target_compile_definitions(_rocm_C_skinny PRIVATE "-DTORCH_EXTENSION_NAME=_rocm_C")
     target_link_libraries(_rocm_C_skinny PRIVATE torch)
   else()
-    message(STATUS "Only gfx1250, skipping skinny_gemms")
+    message(STATUS "Only gfx1250/gfx1260, skipping skinny_gemms")
     list(APPEND VLLM_ROCM_EXT_FLAGS "-DVLLM_SKIP_SKINNY_GEMMS")
   endif()
 

@@ -211,6 +211,9 @@ def _get_gcn_arch() -> str:
     Get GCN arch via amdsmi (no CUDA init), fallback to torch.cuda.
     Called once at module level; result stored in _GCN_ARCH.
     """
+    _override = os.environ.get("VLLM_ROCM_GCN_ARCH", "").strip()
+    if _override:
+        return _override
     try:
         return _query_gcn_arch_from_amdsmi()
     except Exception as e:
@@ -244,9 +247,12 @@ _ON_GFX90A = "gfx90a" in _GCN_ARCH
 _ON_GFX942 = "gfx942" in _GCN_ARCH
 _ON_GFX950 = "gfx950" in _GCN_ARCH
 _ON_GFX1250 = "gfx1250" in _GCN_ARCH
+# gfx1260 is a sibling of gfx1250 (same gfx12/CDNA4-family silicon) and shares its
+# kernel quirks; it is treated as a peer of gfx1250 everywhere below.
+_ON_GFX1260 = "gfx1260" in _GCN_ARCH
 
-_ON_CDNA = any(arch in _GCN_ARCH for arch in ["gfx9", "gfx1250"])
-# RDNA = gfx11/gfx12 minus the CDNA-classified gfx1250.
+_ON_CDNA = any(arch in _GCN_ARCH for arch in ["gfx9", "gfx1250", "gfx1260"])
+# RDNA = gfx11/gfx12 minus the CDNA-classified gfx1250/gfx1260.
 _ON_RDNA = _ON_GFX1X and not _ON_CDNA
 _ON_RDNA4 = any(arch in _GCN_ARCH for arch in ["gfx1200", "gfx1201"])
 
@@ -349,6 +355,9 @@ def on_gfx1250() -> bool:
 def on_rdna4() -> bool:
     return _ON_RDNA4
 
+def on_gfx1260() -> bool:
+    return _ON_GFX1260
+
 
 def on_mi3xx() -> bool:
     return _ON_MI3XX
@@ -385,10 +394,9 @@ def get_cdna_version() -> int:
         return 3
     if on_gfx950():
         return 4
-    if on_gfx1250():
+    if on_gfx1250() or on_gfx1260():
         return 5
     return 0
-
 
 # Enable HIP online tuning early, before hipBLASLt initializes.
 # Turn on hipBLASLt online tuning if use AITER hipBLASLt GEMM.
@@ -982,7 +990,7 @@ class RocmPlatform(Platform):
 
     @classmethod
     def supports_mx(cls) -> bool:
-        return any(gfx in _GCN_ARCH for gfx in ["gfx95", "gfx1250"])
+        return any(gfx in _GCN_ARCH for gfx in ["gfx95", "gfx1250", "gfx1260"])
 
     @classmethod
     def supports_fp8(cls) -> bool:

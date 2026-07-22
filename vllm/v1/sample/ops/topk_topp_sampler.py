@@ -20,9 +20,9 @@ logger = init_logger(__name__)
 
 def _skip_aiter_sampler_on_gfx1250() -> bool:
     # Lazy ROCm-only import; keeps arch detection out of import time on CUDA/CPU.
-    from vllm.platforms.rocm import on_gfx1250
+    from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-    return on_gfx1250()
+    return on_gfx1250() or on_gfx1260()
 
 
 def flashinfer_sampler_supported() -> bool:

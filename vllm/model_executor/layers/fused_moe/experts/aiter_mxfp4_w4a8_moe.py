@@ -102,14 +102,14 @@ def aiter_triton_kernel_w4a8_moe_forward(
         and quant_config.use_mxfp4_w4a8
         and rocm_aiter_ops.is_enabled()
     )
-    from vllm.platforms.rocm import on_gfx1250
+    from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
     try:
         from aiter.ops.triton.moe.moe_routing import routing as _routing_mod
     except ImportError:
         from aiter.ops.triton.moe_routing import routing as _routing_mod
 
-    if on_gfx1250():
+    if on_gfx1250() or on_gfx1260():
         _routing_mod.is_tdm_avail = lambda: False
     aiter_routing = _routing_mod.routing
 
@@ -122,13 +122,13 @@ def aiter_triton_kernel_w4a8_moe_forward(
         gating_output, topk, sm_first=not renormalize
     )
 
-    # gfx1250: aiter's in-kernel gather is numerically broken (validated on the
-    # FFM sim: do_gather=True -> maxrel ~2.4), so gather rows into expert-sorted
+    # gfx1250/gfx1260: aiter's in-kernel gather is numerically broken (validated on
+    # the FFM sim: do_gather=True -> maxrel ~2.4), so gather rows into expert-sorted
     # order in torch and pass gather_indx=None. Per aiter's moe_gemm_torch,
     # sorted row i reads source token gather_idx[i] // n_expts_act, so this
     # reproduces the in-kernel gather exactly (manual gather -> maxrel ~5e-3).
     # gfx950 keeps the (working) in-kernel gather.
-    if on_gfx1250():
+    if on_gfx1250() or on_gfx1260():
         gather_src = gather_idx.to(torch.long) // topk
         hidden_states = hidden_states[gather_src]
         gather_idx = None
@@ -297,9 +297,9 @@ class AiterW4A8ExpertsMonolithic(mk.FusedMoEExpertsMonolithic):
         # triton_kernel_fused_mxfp4_w4a8_experts).
         if not rocm_aiter_ops.is_enabled():
             return False
-        from vllm.platforms.rocm import on_gfx950, on_gfx1250
+        from vllm.platforms.rocm import on_gfx950, on_gfx1250, on_gfx1260
 
-        return on_gfx950() or on_gfx1250()
+        return on_gfx950() or on_gfx1250() or on_gfx1260()
 
     @staticmethod
     def _supports_no_act_and_mul() -> bool:

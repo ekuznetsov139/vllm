@@ -6,7 +6,6 @@ from dataclasses import replace
 import torch
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
-from vllm import _custom_ops as ops
 from vllm._aiter_ops import rocm_aiter_ops
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.activation import MoEActivation
@@ -57,7 +56,7 @@ def _triton_kernel_moe_supports_current_device() -> bool:
         # on_gfx9() already excludes gfx906/gfx908.
         # gfx1x family: gfx11xx (RDNA3/3.5) and gfx12xx (RDNA4);
         # on_gfx1x() excludes gfx10xx (RDNA1/RDNA2).
-        return on_gfx9() or on_gfx1x()
+        return on_gfx9() or on_gfx1x() or on_gfx1250() or on_gfx1260()
     return False
 
 

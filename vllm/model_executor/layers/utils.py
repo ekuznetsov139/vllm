@@ -260,7 +260,13 @@ def use_aiter_triton_gemm(n, m, k, dtype):
 def rocm_unquantized_gemm_impl(
     x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor | None = None
 ) -> torch.Tensor:
-    from vllm.platforms.rocm import on_gfx1x, on_gfx9, on_gfx950, on_gfx1250
+    from vllm.platforms.rocm import (
+        on_gfx1x,
+        on_gfx9,
+        on_gfx950,
+        on_gfx1250,
+        on_gfx1260,
+    )
 
     n = x.numel() // x.size(-1)
     m = weight.shape[0]
@@ -307,11 +313,13 @@ def rocm_unquantized_gemm_impl(
         x_view = x.reshape(-1, x.size(-1)).contiguous()
         return ops.wvSplitKrc(x_view, weight, cu_count, bias)
 
-    # gfx1250's aiter gemm_a16w16 uses the gluon backend, which requires
+    # gfx1250/gfx1260's aiter gemm_a16w16 uses the gluon backend, which requires
     # K % 256 == 0 (it walks K with fixed-size descriptors and won't pad a
     # partial last tile). Some whitelisted shapes have K=2880 (e.g. gpt-oss-120b
     # hidden), so skip aiter there and fall back to the torch GEMM path below.
-    if use_aiter_triton_gemm(n, m, k, x.dtype) and not (on_gfx1250() and k % 256 != 0):
+    if use_aiter_triton_gemm(n, m, k, x.dtype) and not (
+        (on_gfx1250() or on_gfx1260()) and k % 256 != 0
+    ):
         from aiter.ops.triton.gemm_a16w16 import gemm_a16w16
 
         return gemm_a16w16(x, weight, bias)

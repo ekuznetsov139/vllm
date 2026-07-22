@@ -552,10 +552,10 @@ def has_tilelang() -> bool:
     from vllm.platforms import current_platform
 
     if current_platform.is_rocm():
-        from vllm.platforms.rocm import on_gfx1250
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-        # TODO: Re-enable when tilelang supports gfx1250
-        if on_gfx1250():
+        # TODO: Re-enable when tilelang supports gfx1250/gfx1260
+        if on_gfx1250() or on_gfx1260():
             return False
     return True
 

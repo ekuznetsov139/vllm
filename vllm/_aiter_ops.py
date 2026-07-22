@@ -3040,7 +3040,16 @@ class rocm_aiter_ops:
     def is_triton_gemm_w8a8_tuned(n: int, k: int) -> bool:
         if not current_platform.is_rocm():
             return False
-        from vllm.platforms.rocm import on_gfx950, on_rdna4
+        from vllm.platforms.rocm import (
+            on_gfx950,
+            on_rdna4,
+            on_gfx1250,
+            on_gfx1260,
+        )
+
+        # gfx1250/gfx1260 always take the aiter Triton w8a8 path.
+        if on_gfx1250() or on_gfx1260():
+            return True
 
         gfx950_tuned = {
             (1024, 8192),
