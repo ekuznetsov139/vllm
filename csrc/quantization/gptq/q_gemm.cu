@@ -18,6 +18,43 @@ https://github.com/qwopqwop200/GPTQ-for-LLaMa
 #include "qdq_4.cuh"
 #include "qdq_8.cuh"
 
+#if defined(USE_ROCM)
+__device__ __forceinline__ __half atomicAdd(__half* address, __half val) {
+  uintptr_t addr = reinterpret_cast<uintptr_t>(address);
+  bool is_high = (addr & 2) != 0;
+  unsigned int* base = reinterpret_cast<unsigned int*>(addr & ~static_cast<uintptr_t>(2));
+  unsigned int old = *base;
+  unsigned int assumed;
+  do {
+    assumed = old;
+    unsigned short cur = is_high ? static_cast<unsigned short>(assumed >> 16)
+                                 : static_cast<unsigned short>(assumed & 0xffffu);
+    unsigned short sum = __half_as_ushort(__hadd(__ushort_as_half(cur), val));
+    unsigned int updated =
+        is_high ? ((assumed & 0x0000ffffu) | (static_cast<unsigned int>(sum) << 16))
+                : ((assumed & 0xffff0000u) | static_cast<unsigned int>(sum));
+    old = atomicCAS(base, assumed, updated);
+  } while (assumed != old);
+  unsigned short result = is_high ? static_cast<unsigned short>(old >> 16)
+                                  : static_cast<unsigned short>(old & 0xffffu);
+  return __ushort_as_half(result);
+}
+
+__device__ __forceinline__ __half2 atomicAdd(__half2* address, __half2 val) {
+  unsigned int* address_as_uint = reinterpret_cast<unsigned int*>(address);
+  unsigned int old = *address_as_uint;
+  unsigned int assumed;
+  do {
+    assumed = old;
+    __half2 assumed_h2 = *reinterpret_cast<__half2*>(&assumed);
+    __half2 sum = __hadd2(assumed_h2, val);
+    unsigned int sum_as_uint = *reinterpret_cast<unsigned int*>(&sum);
+    old = atomicCAS(address_as_uint, assumed, sum_as_uint);
+  } while (assumed != old);
+  return *reinterpret_cast<__half2*>(&old);
+}
+#endif
+
 namespace vllm {
 namespace gptq {
 

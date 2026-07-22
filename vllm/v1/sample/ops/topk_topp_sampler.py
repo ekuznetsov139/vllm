@@ -99,6 +99,14 @@ def _flashinfer_jit_unsupported_reason(capability: DeviceCapability) -> str | No
     return reason
 
 
+def _skip_aiter_sampler_on_gfx1260() -> bool:
+    # Lazy ROCm-only import; keeps arch detection out of import time on CUDA/CPU.
+    # gfx1250 takes the aiter sampler upstream; gfx1260 is not validated yet.
+    from vllm.platforms.rocm import on_gfx1260
+
+    return on_gfx1260()
+
+
 def flashinfer_sampler_supported() -> bool:
     """Decide whether FlashInfer's top-p/top-k sampler can be used.
 
@@ -271,6 +279,7 @@ class TopKTopPSampler(nn.Module):
         elif (
             logprobs_mode not in PROCESSED_LOGPROBS_MODES
             and rocm_aiter_ops.is_enabled()
+            and not _skip_aiter_sampler_on_gfx1260()
         ):
             # Lazy ROCm-only import; keeps arch detection out of import time
             # on CUDA/CPU.

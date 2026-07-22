@@ -4339,6 +4339,12 @@ class rocm_aiter_ops:
     def is_triton_gemm_w8a8_tuned(n: int, k: int) -> bool:
         if not current_platform.is_rocm():
             return False
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
+
+        # gfx1250/gfx1260 always take the aiter Triton w8a8 path.
+        if on_gfx1250() or on_gfx1260():
+            return True
+
         try:
             return _triton_gemm_config_is_tuned("GEMM-A8W8_BLOCKSCALE", n, k)
         except (AssertionError, ImportError):
