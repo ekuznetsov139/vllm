@@ -1387,9 +1387,9 @@ def convert_weight_to_mxfp4_moe_kernel_format(
     """
     is_gfx1250 = False
     if current_platform.is_rocm():
-        from vllm.platforms.rocm import on_gfx1250
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-        is_gfx1250 = on_gfx1250()
+        is_gfx1250 = (on_gfx1250() or on_gfx1260())
 
     if mxfp4_backend in B12X_BACKENDS:
         return (

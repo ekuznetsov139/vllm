@@ -888,9 +888,9 @@ def w8a8_triton_block_scaled_mm(
 
     _on_gfx1250 = False
     if current_platform.is_rocm():
-        from vllm.platforms.rocm import on_gfx1250
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-        _on_gfx1250 = on_gfx1250()
+        _on_gfx1250 = (on_gfx1250() or on_gfx1260())
 
     if _on_gfx1250:
         # Torch upcast reference: dequantize A,B to fp32 and matmul in fp32.

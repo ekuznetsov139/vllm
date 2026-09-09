@@ -155,7 +155,7 @@ def aiter_triton_kernel_w4a16_moe_forward(
     from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
         should_use_cdna4_mx_scale_swizzle,
     )
-    from vllm.platforms.rocm import on_gfx1250
+    from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
     try:
         from aiter.ops.triton.moe.moe_op_gemm_a16w4 import moe_gemm_a16w4
@@ -166,7 +166,7 @@ def aiter_triton_kernel_w4a16_moe_forward(
     except ImportError:
         from aiter.ops.triton.moe_routing import routing as _routing_mod
 
-    if on_gfx1250():
+    if (on_gfx1250() or on_gfx1260()):
         _routing_mod.is_tdm_avail = lambda: False
     aiter_routing = _routing_mod.routing
 
@@ -195,7 +195,7 @@ def aiter_triton_kernel_w4a16_moe_forward(
             gating_output, topk, sm_first=not renormalize
         )
 
-    if on_gfx1250():
+    if (on_gfx1250() or on_gfx1260()):
         gather_src = gather_idx.to(torch.long) // topk
         hidden_states = hidden_states[gather_src]
         gather_idx = None
@@ -223,7 +223,7 @@ def aiter_triton_kernel_w4a16_moe_forward(
         swiglu_limit = None
 
     # SILU on gfx1250: use the verified a8w4 kernel (dynamic MXFP8); a16w4 faults.
-    if activation == MoEActivation.SILU and on_gfx1250():
+    if activation == MoEActivation.SILU and (on_gfx1250() or on_gfx1260()):
         return _aiter_w4a16_silu_via_a8w4(
             hidden_states,
             w1_data,
@@ -314,9 +314,9 @@ class AiterW4A16ExpertsMonolithic(mk.FusedMoEExpertsMonolithic):
     def _supports_current_device() -> bool:
         if not rocm_aiter_ops.is_enabled():
             return False
-        from vllm.platforms.rocm import on_gfx942, on_gfx950, on_gfx1250
+        from vllm.platforms.rocm import on_gfx942, on_gfx950, on_gfx1250, on_gfx1260
 
-        return on_gfx942() or on_gfx950() or on_gfx1250()
+        return on_gfx942() or on_gfx950() or (on_gfx1250() or on_gfx1260())
 
     @staticmethod
     def _supports_no_act_and_mul() -> bool:

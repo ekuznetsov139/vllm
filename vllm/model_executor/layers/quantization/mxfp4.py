@@ -737,9 +737,9 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
         # that don't support .detach(). Manually assign parameters.
         is_gfx1250 = False
         if current_platform.is_rocm():
-            from vllm.platforms.rocm import on_gfx1250
+            from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-            is_gfx1250 = on_gfx1250()
+            is_gfx1250 = (on_gfx1250() or on_gfx1260())
 
         uses_triton_weight_format = self.mxfp4_backend in TRITON_BACKENDS or (
             self.mxfp4_backend == Mxfp4MoeBackend.AITER_MXFP4_BF16 and is_gfx1250
@@ -796,9 +796,9 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
 
         is_gfx1250 = False
         if current_platform.is_rocm():
-            from vllm.platforms.rocm import on_gfx1250
+            from vllm.platforms.rocm import on_gfx1250, on_gfx1260
 
-            is_gfx1250 = on_gfx1250()
+            is_gfx1250 = (on_gfx1250() or on_gfx1260())
 
         if self.mxfp4_backend in TRITON_BACKENDS or (
             self.mxfp4_backend == Mxfp4MoeBackend.AITER_MXFP4_BF16 and is_gfx1250
