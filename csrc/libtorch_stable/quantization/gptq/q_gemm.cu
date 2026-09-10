@@ -18,7 +18,10 @@ https://github.com/qwopqwop200/GPTQ-for-LLaMa
 #include "qdq_4.cuh"
 #include "qdq_8.cuh"
 
-#if defined(USE_ROCM)
+// HIP >= 7.14 provides native __half/__half2 atomicAdd overloads
+// (amd_hip_fp16.h, __scoped_atomic_fetch_add). Defining them here too is a
+// redefinition error on those SDKs, so only vendor the CAS fallback on older HIP.
+#if defined(USE_ROCM) && (!defined(HIP_VERSION) || HIP_VERSION < 71400000)
 __device__ __forceinline__ __half atomicAdd(__half* address, __half val) {
   uintptr_t addr = reinterpret_cast<uintptr_t>(address);
   bool is_high = (addr & 2) != 0;
