@@ -146,10 +146,14 @@ class DeepseekV4MLP(nn.Module):
         # B-preshuffle the gate_up_proj weight in place (single weight).
         if not self._gateup:
             return
-        # aiter's gemm_a8w8_blockscale_bpreshuffle currently disabled on gfx1250.
-        # Leaving _gateup_scale as None -> "not preshuffled"
-        # forward() falls back to the standard gate_up_proj linear
-        if on_gfx1250():
+        # Same constraint as prepare_attn_preshuffle: the preshuffled GEMM is
+        # aiter's Composable Kernel gemm_a8w8_blockscale_bpreshuffle, and
+        # ck_tile has no gfx1250/gfx1260 target, so that module cannot be
+        # JIT-built there. Leave the weight unshuffled -> forward() takes the
+        # ordinary (Triton a8w8 blockscale) linear path.
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
+
+        if on_gfx1250() or on_gfx1260():
             return
         from vllm.model_executor.layers.quantization.utils.fp8_utils import (
             _upcast_e8m0_to_fp32,
