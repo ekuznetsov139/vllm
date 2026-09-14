@@ -70,17 +70,6 @@ def _aiter_mhc_supported(
     *,
     supports_norm: bool,
 ) -> bool:
-    # aiter's MHC kernels (csrc/kernels/mhc_kernels.cu) are ck_tile-based, and
-    # ck_tile has no gfx1260 target: its arch enum covers gfx908/90a/942/950,
-    # gfx101x/103x, gfx11xx and gfx1200/1201/GFX12_GENERIC only, so device
-    # compilation static-asserts ("Only one target architecture can be defined").
-    # aiter is therefore built with ENABLE_CK=0 on gfx1260 and module_mhc cannot
-    # be JIT-built; fall back to the tilelang/native MHC path instead of failing
-    # at first call.
-    from vllm.platforms.rocm import on_gfx1260
-
-    if on_gfx1260():
-        return False
     hidden_size = residual.shape[-1]
     hc_mult = residual.shape[-2]
     return (
