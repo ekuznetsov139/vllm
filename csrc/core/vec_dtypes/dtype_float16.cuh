@@ -89,7 +89,7 @@ inline __device__ float half_to_float(uint16_t h) {
 #ifndef USE_ROCM
   asm volatile("cvt.f32.f16 %0, %1;\n" : "=f"(f) : "h"(h));
 #else
-  asm volatile("v_cvt_f32_f16 %0, %1;" : "=v"(f) : "v"(h));
+  f = static_cast<float>(__builtin_bit_cast(_Float16, h));
 #endif
   return f;
 }
@@ -120,7 +120,7 @@ inline __device__ uint16_t float_to_half(float f) {
 #ifndef USE_ROCM
   asm volatile("cvt.rn.f16.f32 %0, %1;\n" : "=h"(tmp.u16[0]) : "f"(f));
 #else
-  asm volatile("v_cvt_f16_f32 %0, %1;\n" : "=v"(tmp.u32) : "v"(f));
+  tmp.u16[0] = __builtin_bit_cast(uint16_t, static_cast<_Float16>(f));
 #endif
   return tmp.u16[0];
 }
@@ -152,7 +152,8 @@ inline __device__ uint16_t add(uint16_t a, uint16_t b) {
 #ifndef USE_ROCM
   asm volatile("add.f16 %0, %1, %2;\n" : "=h"(c) : "h"(a), "h"(b));
 #else
-  asm volatile("v_add_f16 %0, %1, %2;\n" : "=v"(c) : "v"(a), "v"(b));
+  c = __builtin_bit_cast(uint16_t, __builtin_bit_cast(_Float16, a) +
+                                       __builtin_bit_cast(_Float16, b));
 #endif
   return c;
 }
@@ -211,7 +212,8 @@ inline __device__ uint16_t mul(uint16_t a, uint16_t b) {
 #ifndef USE_ROCM
   asm volatile("mul.f16 %0, %1, %2;\n" : "=h"(c) : "h"(a), "h"(b));
 #else
-  asm volatile("v_mul_f16 %0, %1, %2;\n" : "=v"(c) : "v"(a), "v"(b));
+  c = __builtin_bit_cast(uint16_t, __builtin_bit_cast(_Float16, a) *
+                                       __builtin_bit_cast(_Float16, b));
 #endif
   return c;
 }
