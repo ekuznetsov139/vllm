@@ -82,7 +82,7 @@ from vllm.models.deepseek_v4.amd.mega_moe import (
 )
 from vllm.models.deepseek_v4.amd.rocm import DeepseekV4ROCMAiterMLAAttention
 from vllm.platforms import current_platform
-from vllm.platforms.rocm import on_gfx950, on_gfx1250
+from vllm.platforms.rocm import on_gfx950
 from vllm.sequence import IntermediateTensors
 from vllm.utils.multi_stream_utils import maybe_execute_in_parallel
 from vllm.utils.torch_utils import aux_stream
