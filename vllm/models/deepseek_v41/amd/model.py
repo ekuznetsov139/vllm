@@ -1045,10 +1045,16 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             and not self.use_sequence_parallel
         )
 
+        num_layers = self.config.num_hidden_layers
         for name, loaded_weight in weights:
             if name.startswith(("vision.", "aligner.", "image_")):
                 # Vision weights are loaded by the outer multimodal wrapper.
                 logger.warning_once("Skipping non-text weight: %s", name)
+                continue
+            layer_match = re.match(r"layers\.(\d+)\.", name)
+            if layer_match and int(layer_match.group(1)) >= num_layers:
+                # Layer pruned via a num_hidden_layers hf_override; skip its
+                # checkpoint weights instead of KeyError-ing.
                 continue
             if pad_shared_expert and ".shared_experts." in name:
                 loaded_weight = self._pad_shared_expert_weight(

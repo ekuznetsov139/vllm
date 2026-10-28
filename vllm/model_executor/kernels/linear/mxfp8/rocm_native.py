@@ -236,6 +236,14 @@ class RocmDotScaledMxfp8LinearKernel(Mxfp8LinearKernel):
         # through to the BF16 emulation (hipBLASLt) path instead.
         if not current_platform.supports_mx():
             return False, "native MX requires CDNA4 (gfx95x)"
+        # supports_mx() is also true on gfx1250/gfx1260, but the kernels here are
+        # gfx950 code (rocm_block32_gemm.py's inline ``s_waitcnt vmcnt(0)`` is
+        # gfx9 syntax; gfx12 has split wait counters), so they fall through to
+        # the BF16 emulation kernel.
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
+
+        if on_gfx1250() or on_gfx1260():
+            return False, "the native MX kernels are gfx950-only"
         return True, None
 
     @classmethod

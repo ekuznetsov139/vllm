@@ -608,6 +608,14 @@ class DeepseekV41ROCMAiterMLAAttention(DeepseekV4Attention):
 
         if not rocm_aiter_ops.is_enabled():
             return
+        # The preshuffled path routes through aiter's
+        # gemm_a8w8_blockscale_bpreshuffle, a Composable Kernel module, and
+        # ck_tile has no gfx1250/gfx1260 target. Leave the weights unshuffled
+        # so the attention takes the ordinary linear path there.
+        from vllm.platforms.rocm import on_gfx1250, on_gfx1260
+
+        if on_gfx1250() or on_gfx1260():
+            return
         from vllm.model_executor.layers.quantization.utils.fp8_utils import (
             _upcast_e8m0_to_fp32,
         )
