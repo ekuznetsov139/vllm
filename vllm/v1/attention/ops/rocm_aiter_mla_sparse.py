@@ -5068,7 +5068,10 @@ def rocm_sparse_attn_decode(
     assert output is not None
     if direct_out is None:
         output.copy_(attn_out.to(output.dtype))
-    return output.shape[0] if inv_rope_positions is not None else 0
+    # The fallback kernel for un-tuned architectures has no reduce epilogue, so it
+    # leaves the rotation to the caller.
+    fused = inv_rope_positions is not None and (_ON_GFX942 or _ON_GFX950)
+    return output.shape[0] if fused else 0
 
 
 @triton.jit(do_not_specialize=["token_offset"])
