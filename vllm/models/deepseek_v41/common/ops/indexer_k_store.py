@@ -93,6 +93,9 @@ def indexer_k_norm_rope_store(
                 f"({block_size}) % {_BLOCK_TILE_SIZE} == 0 and head_dim "
                 f"({head_dim}) % {_HEAD_TILE_SIZE} == 0."
             )
+        # A strided slice of the combined per-block record is read row-major by
+        # both readers (_indexer_read_layout), so it must be written that way.
+        shuffle = k_cache.stride(0) == block_size * (token_stride + scale_dim)
 
     launch_kwargs = {"launch_pdl": False} if current_platform.is_cuda() else {}
     _indexer_k_norm_rope_quant_store_kernel[(num_tokens,)](
