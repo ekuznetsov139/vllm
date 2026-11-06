@@ -83,6 +83,12 @@ def _mono_runner(device: torch.device, draft: "MonoDecodeLayer | None" = None):
     SWA rows differ). Its peer-memory handshake is collective over the TP group:
     every rank builds it at the same layer of the same step."""
     global _runner, _draft_runner
+    if _on_gfx1260():
+        if _runner is None:
+            from vllm.models.deepseek_v41.amd.mono_gfx1260 import Gfx1260MonoRunner
+
+            _runner = Gfx1260MonoRunner(_ckpt_path(), device)
+        return _runner
     if draft is not None:
         if _draft_runner is None:
             if torch.cuda.is_current_stream_capturing():
@@ -133,6 +139,22 @@ def _record_view(kv: torch.Tensor, block: int) -> torch.Tensor:
 
 def _scale_bytes(scale: torch.Tensor) -> torch.Tensor:
     return scale if scale.dtype == torch.uint8 else scale.view(torch.uint8)
+
+
+def _on_gfx1260() -> bool:
+    from vllm.platforms.rocm import on_gfx1260
+
+    return on_gfx1260()
+
+
+_ckpt: str | None = None
+
+
+def _ckpt_path() -> str:
+    """The checkpoint directory, recorded when the layers are created: forward passes
+    have no current vLLM config."""
+    assert _ckpt is not None
+    return _ckpt
 
 
 def _on_gfx942() -> bool:
@@ -352,6 +374,12 @@ class MonoDecodeLayer:
 
         # the deployment: an explicit opt-in that cannot run is an error
         why = None
+        if _on_gfx1260():
+            global _ckpt
+            _ckpt = vllm_config.model_config.model
+            if get_tensor_model_parallel_world_size() != 1:
+                raise ValueError("--monokernel on gfx1260 needs tensor parallel size 1.")
+            return MonoDecodeLayer._create_gfx1260(layer)
         if get_cdna_version() not in CDNA_VERSIONS:
             why = f"needs CDNA{'/'.join(map(str, CDNA_VERSIONS))}"
         elif get_tensor_model_parallel_world_size() not in (2, 4):
@@ -486,8 +514,43 @@ class MonoDecodeLayer:
         logger.info_once("DSv4.1 mono decode: the whole standard backbone layers")
         return MonoDecodeLayer()
 
+    @staticmethod
+    def _create_gfx1260(layer: "DeepseekV4DecoderLayer") -> "MonoDecodeLayer | None":
+        """The kernels read their own weights from the checkpoint, so vLLM's MoE
+        backend and its bf16 dense weights do not matter. They do need vLLM's KV
+        record and the standard routing. Draft layers keep vLLM's path."""
+        attn, ffn = layer.attn, layer.ffn
+        why = None
+        if ffn.shared_experts is None or ffn.gate.tid2eid is not None:
+            why = "MoE layout"
+        elif (
+            ffn.n_routed_experts != 384
+            or ffn.n_activated_experts != 6
+            or ffn.routed_scaling_factor != 1.5
+            or ffn.swiglu_limit != 10.0
+            or ffn.scoring_func != "sqrtsoftplus"
+            or not ffn.renormalize
+        ):
+            why = "MoE routing"
+        elif attn.compress_ratio not in (0, 1, 2):
+            why = f"compress ratio {attn.compress_ratio}"
+        elif attn.kv_mxfp8 or attn.kv_cache_dtype != "fp8_ds_mla":
+            why = f"a {attn.kv_cache_dtype} KV cache"
+        elif attn.compressor is not None and attn.indexer is None:
+            why = "a compressor without an indexer"
+        if why is not None:
+            logger.info_once("DSv4.1 mono decode off for some layers: %s", why)
+            return None
+        logger.info_once("DSv4.1 mono decode: gfx1260 TP1 kernels")
+        return MonoDecodeLayer()
+
     def weights(self, layer: "DeepseekV4DecoderLayer"):
         if self._weights is not None:
+            return self._weights
+        if _on_gfx1260():
+            self._weights = _mono_runner(layer.hc_attn_fn.device).layer_weights(
+                layer.attn.layer_id
+            )
             return self._weights
         from vllm.models.deepseek_v41.amd.mono.runner import MonoLayerWeights
 
@@ -723,6 +786,9 @@ class MonoDecodeLayer:
                 ),
                 comp_block_table=comp.block_table,
             )
+        if _on_gfx1260():
+            kw["cos_sin"] = attn.rotary_emb.cos_sin_cache
+            kw["ratio"] = attn.compress_ratio
         return runner.forward(
             self.weights(layer),
             x,
