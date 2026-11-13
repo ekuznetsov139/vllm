@@ -862,6 +862,7 @@ class DeepseekV4DecoderLayer(nn.Module):
         topk_indices_buffer: torch.Tensor | None = None,
         aux_stream_list: list[torch.cuda.Stream] | None = None,
         fuse_heterogeneous_shared_expert: bool = False,
+        backbone: bool = False,
     ):
         super().__init__()
 
@@ -950,6 +951,16 @@ class DeepseekV4DecoderLayer(nn.Module):
             self.fuse_mhc_rmsnorm = self.hidden_size in _AITER_MHC_FUSED_RMSNORM_SIZES
         else:
             self.fuse_mhc_rmsnorm = HAS_TILELANG_MHC and self.use_fused_mhc
+
+        # --monokernel: the gfx1260 decode kernels, for the backbone's layers
+        # only (not the MTP or draft layers that reuse this class).
+        self.mono = None
+        if backbone and vllm_config.kernel_config.monokernel:
+            from vllm.models.deepseek_v4.amd.mono_gfx1260 import MonoDecodeLayer
+
+            self.mono = MonoDecodeLayer.create(
+                self, extract_layer_index(prefix), vllm_config
+            )
 
     def hc_pre(
         self,
@@ -1096,6 +1107,10 @@ class DeepseekV4DecoderLayer(nn.Module):
     ) -> tuple[
         torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
     ]:
+        if self.mono is not None:
+            out = self.mono(self, x, positions, input_ids, post_mix, res_mix, residual)
+            if out is not None:
+                return out
         if not self.use_fused_mhc:
             return self._forward_unfused_post_pre(
                 x, positions, input_ids, post_mix, res_mix, residual
@@ -1153,6 +1168,7 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                 fuse_heterogeneous_shared_expert=(
                     self.fuse_heterogeneous_shared_expert
                 ),
+                backbone=True,
             ),
             prefix=f"{prefix}.layers",
         )
