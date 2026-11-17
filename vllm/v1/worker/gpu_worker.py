@@ -194,6 +194,13 @@ class AsyncIntermediateTensors(IntermediateTensors):
         return object.__getattribute__(self, name)
 
 
+
+def _ffm_skip_warmup() -> bool:
+    """VLLM_FFM_SKIP_WARMUP=1: skip the dummy profile forward (only on the
+    kv_cache_memory_bytes path) and kernel_warmup. For simulator runs, where
+    every warm-up pass costs hours and pads roccap captures; eager only."""
+    return os.environ.get("VLLM_FFM_SKIP_WARMUP", "0") == "1"
+
 class Worker(WorkerBase):
     def __init__(
         self,
@@ -655,11 +662,14 @@ class Worker(WorkerBase):
 
         if kv_cache_memory_bytes := self.cache_config.kv_cache_memory_bytes:
             # still need a profile run which compiles the model for
-            # max_num_batched_tokens
-            with set_current_vllm_config(self.vllm_config):
-                self.model_runner.profile_run(
-                    randomize_inputs=self.randomize_dummy_inputs
-                )
+            # max_num_batched_tokens. VLLM_FFM_SKIP_WARMUP=1 skips it: on a
+            # simulator the dummy forward costs as much as the real one, and
+            # with the KV size given there is nothing to measure.
+            if not _ffm_skip_warmup():
+                with set_current_vllm_config(self.vllm_config):
+                    self.model_runner.profile_run(
+                        randomize_inputs=self.randomize_dummy_inputs
+                    )
 
             msg = (
                 f"Initial free memory {format_gib(self.init_snapshot.free_memory)} "
@@ -973,7 +983,8 @@ class Worker(WorkerBase):
 
         # Warmup and tune the kernels used during model execution before
         # cuda graph capture.
-        kernel_warmup(self)
+        if not _ffm_skip_warmup():
+            kernel_warmup(self)
 
         if self.use_v2_model_runner:  # noqa: SIM102
             if self.vllm_config.kernel_config.enable_jit_warmup:
